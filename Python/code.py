@@ -451,4 +451,12 @@ while power:
                     if local_network:
                         mqtt_client.publish(online_feed,0)
                         mqtt_client.disconnect()
+
+                time.sleep(0.05)
+        except (KeyboardInterrupt, OSError, TypeError) as e:
+            power = False
+            mqtt_client.publish(online_feed,0)
+            mqtt_client.publish(light_feed,0)
+            mqtt_client.disconnect()
+
                
