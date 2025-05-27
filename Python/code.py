@@ -262,8 +262,11 @@ while power:
                
                 try:
                     server.poll()
-                except RuntimeError as e:
+                except (ConnectionError, RuntimeError) as e:
+                    server.stop()
+                    local_network = False
                     print("Connection Closed")
+                    break
                 #     print("No requests. Try UDP pinging")
                 #     UDP_PING(udp_server)
                 
@@ -389,8 +392,10 @@ while power:
         AVOID_THROTTLE_TIME = 10
         last_request_time = time.monotonic()
         change_mode_time = last_request_time
+        mqtt_alive = True
         try:
-            while True:
+            while not local_network:
+                
                 mqtt_client.loop()
                 current = time.monotonic()
     
@@ -451,7 +456,7 @@ while power:
                     if local_network:
                         mqtt_client.publish(online_feed,0)
                         mqtt_client.disconnect()
-
+    
                 time.sleep(0.05)
         except (KeyboardInterrupt, OSError, TypeError) as e:
             power = False
@@ -459,4 +464,4 @@ while power:
             mqtt_client.publish(light_feed,0)
             mqtt_client.disconnect()
 
-               
+          
