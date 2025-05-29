@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Pressed state: pop down and slightly shrink -->
+    <item android:state_pressed="true">
+        <set>
+            <objectAnimator
+                android:propertyName="translationY"
+                android:duration="50"
+                android:valueType="floatType"
+                android:valueTo="4dp" />
+            <objectAnimator
+                android:propertyName="scaleX"
+                android:duration="50"
+                android:valueType="floatType"
+                android:valueTo="0.95" />
+            <objectAnimator
+                android:propertyName="scaleY"
+                android:duration="50"
+                android:valueType="floatType"
+                android:valueTo="0.95" />
+        </set>
+    </item>
+
+    <!-- Default state: reset to normal -->
+    <item>
+        <set>
+            <objectAnimator
+                android:propertyName="translationY"
+                android:duration="100"
+                android:valueType="floatType"
+                android:valueTo="0dp" />
+            <objectAnimator
+                android:propertyName="scaleX"
+                android:duration="100"
+                android:valueType="floatType"
+                android:valueTo="1.0" />
+            <objectAnimator
+                android:propertyName="scaleY"
+                android:duration="100"
+                android:valueType="floatType"
+                android:valueTo="1.0" />
+        </set>
+    </item>
+
+</selector>
