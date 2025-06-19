@@ -9,8 +9,11 @@ import adafruit_wiznet5k.adafruit_wiznet5k_socketpool as socketpool
 from pwmio import PWMOut
 import adafruit_minimqtt.adafruit_minimqtt as MQTT
 import adafruit_dht
-from adafruit_httpserver import Server, Request, Response, JSONResponse
+from adafruit_httpserver import Server, Request, Response, JSONResponse, POST
 import asyncio
+# import test_fan
+button = DigitalInOut(board.GP2)
+button.direction = Direction.INPUT
 
 LARGEST_POSSIBLE_VALUE = 0x7FFF
 
@@ -122,18 +125,28 @@ def set_reading_values(recv_data):
 
 
     
-
+# small led
 led = DigitalInOut(board.GP5)
 led.direction = Direction.OUTPUT
+
+# Relay Fan
+fan = DigitalInOut(board.GP9)
+fan.direction = Direction.OUTPUT
+fan.value = False
+recorded_temp = 0
+
+# BoxLight
+boxlight = PWMOut(board.GP12)
+boxlight_pwm_stored = 65535 # We suppose the user turn the light to max first
 
 # Initialize connection for SOcket 3
 udp_server = pool.socket(type = 2)
 udp_server.setsockopt(pool.SOL_SOCKET, pool.SO_REUSEADDR, 1)
 udp_server.bind((eth.pretty_ip(eth.ip_address),8888))
-udp_server.settimeout(1.0)
+udp_server.settimeout(0)
 
 # Countdown Time
-TIMEOUT_SEC = 60
+TIMEOUT_SEC = 30
 start = time.monotonic()
 local_network = False
 
@@ -175,8 +188,25 @@ decoder = MP3Decoder(mp3)
 audio = AudioOut(board.GP26)
 # audio.play(decoder)
 
-
-
+def auto_temp():
+    
+    global readings, recorded_temp
+    recv_data = bytearray()
+    
+    # Obtain Data
+    SFA_get_data = bytearray([0x7E ,0x00 ,0x03 ,0x01 ,0x02 ,0xF9 ,0x7E])
+    SFA30.write(SFA_get_data)
+    time.sleep(0.5)
+    segmented_frame = SFA30.readline()
+    
+    while segmented_frame != None:
+        recv_data.extend(segmented_frame)
+        segmented_frame = SFA30.readline()
+        
+        # return JSONResponse(request,{"Temp": readings[2], "Humidity": readings[1],"HCHO": readings[0]})
+    print(recv_data)
+    readings = set_reading_values(recv_data)
+    recorded_temp = readings[2]
 
 
     
@@ -200,41 +230,62 @@ while power:
                 audio.play(decoder)
                 return JSONResponse(request,  {"text": "Hello from Circuit Python", "value":led.value})
               
+            @server.route("/fan")
+            def toggle_fan(request:Request):
+               
+                fan.value = not fan.value
             
+                s = "Turned on" if fan.value else "Turned off"
+                return Response(request, s)
         
             @server.route("/light")
             def toggle_light(request:Request):
                
-                led.value = not led.value
-                s = "Turned on" if led.value else "Turned off"
+                # led.value = not led.value
+                # fan.value = led.value
+                if boxlight.duty_cycle == 0:
+                    boxlight.duty_cycle = boxlight_pwm_stored
+                else:
+                    boxlight.duty_cycle = 0
+                s = "Turned on" if boxlight.duty_cycle > 0 else "Turned off"
                 
                 return Response(request, s)
-               
+                
+            @server.route("/lightbox", POST)
+            def lightbox_change(request:Request):
+                global boxlight_pwm_stored
+                uploaded_body = request.json()
+                boxlight.duty_cycle = int(65535 * (uploaded_body["value"]/100))
+                boxlight_pwm_stored = boxlight.duty_cycle
+                return Response(request,"Complete toggle")
+    
             
             
             @server.route("/SFA30")
             def check_temp(request: Request):
                 # DHT verion
                 # return JSONResponse(request,{"Temp": dht.temperature, "Humidity": dht.humidity})
-                global readings
-                recv_data = bytearray()
+                global readings, recorded_temp, fan
+                # recv_data = bytearray()
                 
-                # Obtain Data
-                SFA_get_data = bytearray([0x7E ,0x00 ,0x03 ,0x01 ,0x02 ,0xF9 ,0x7E])
-                SFA30.write(SFA_get_data)
-                time.sleep(0.5)
-                segmented_frame = SFA30.readline()
+                # # Obtain Data
+                # SFA_get_data = bytearray([0x7E ,0x00 ,0x03 ,0x01 ,0x02 ,0xF9 ,0x7E])
+                # SFA30.write(SFA_get_data)
+                # time.sleep(0.5)
+                # segmented_frame = SFA30.readline()
                 
-                while segmented_frame != None:
-                    recv_data.extend(segmented_frame)
-                    segmented_frame = SFA30.readline()
+                # while segmented_frame != None:
+                #     recv_data.extend(segmented_frame)
+                #     segmented_frame = SFA30.readline()
                     
-                    # return JSONResponse(request,{"Temp": readings[2], "Humidity": readings[1],"HCHO": readings[0]})
-                print(recv_data)
-                readings = set_reading_values(recv_data)
-                    
+                #     # return JSONResponse(request,{"Temp": readings[2], "Humidity": readings[1],"HCHO": readings[0]})
+                # print(recv_data)
+                # readings = set_reading_values(recv_data)
+                # recorded_temp = readings[2]
+
+               
                 
-                return JSONResponse(request,{"Temp": readings[2], "Humidity": readings[1],"HCHO": readings[0]})
+                return JSONResponse(request,{"Temp": readings[2], "Humidity": readings[1],"HCHO": readings[0], "fan":fan.value == 1})
                
            
                     
@@ -256,10 +307,21 @@ while power:
                 
 
             server.start(str(eth.pretty_ip(eth.ip_address)), 5000)
+            server.socket_timeout = 30
             connection = True # To indicate the server is online
             while connection:
-               
-               
+                
+                auto_temp()
+                # if recorded_temp > 24:
+                #     fan.value = 1
+                # else:
+                    # fan.value = 0
+
+                if not button.value:
+                    fan.value = 1
+                else:
+                    fan.value = 0
+                
                 try:
                     server.poll()
                 except (ConnectionError, RuntimeError) as e:
@@ -270,10 +332,11 @@ while power:
                 #     print("No requests. Try UDP pinging")
                 #     UDP_PING(udp_server)
                 
-               
+                
+                
                 now = time.monotonic()
                 if now - last_request_time >= reconnect_second:
-                    last_request_time = now
+                
                     print(last_request_time)
                     print("Ping to see if client still alive")
                     start_local = time.monotonic()
@@ -290,6 +353,7 @@ while power:
                                     print("Device slept/paused. Ping again.")
                                 else:
                                     print(f"Replied to {addr}: {reply}")
+                                    last_request_time = time.monotonic()
                                     local_network = True
                                     data, addr = None, None
                                     break
@@ -299,14 +363,15 @@ while power:
                         # except OSError:
                         #     print("some_msg_1")
                         #     pass
-                        if time.monotonic() - start_local > 20:
-                            print("No discovery in 20s. switching to IoT-platform mode")
+                        if now - start_local > 5:
+                            last_request_time = time.monotonic()
+                            print("No discovery in 5s. switching to IoT-platform mode")
                             server.stop()
                             local_network = False   
                             connection = False  # Break the server poll loop
                             break  # Break the UDP pinging loop
                             
-          
+              
                 time.sleep(0.001)
     
         except:
@@ -327,6 +392,8 @@ while power:
         humid_feed  = f"{secrets["aio_username"]}/feeds/humid"
         online_feed = f"{secrets["aio_username"]}/feeds/online"
         conc_feed   = f"{secrets["aio_username"]}/feeds/conc"
+        boxlight_feed  = f"{secrets["aio_username"]}/feeds/pwmlight"
+        fan_feed  = f"{secrets["aio_username"]}/feeds/fan"
         
         # message = {}
         def connected(client, userdata, flags, rc):
@@ -335,6 +402,8 @@ while power:
             print("Connected to Adafruit IO!")
             # Subscribe to all changes on the feed list.
             client.subscribe(light_feed)
+            client.subscribe(boxlight_feed)
+            client.subscribe(fan_feed)
             # client.subscribe(temp_feed)
             # client.subscribe(humid_feed)
             # client.subscribe(conc_feed)
@@ -347,8 +416,18 @@ while power:
         def message(client, topic, message):
         # This method is called when a topic the client is subscribed to
         # has a new message.
+            global boxlight_pwm_stored
+            # print("Boxlight:",boxlight_pwm_stored)
             if topic == light_feed:
-                led.value = int(message)
+                boxlight.duty_cycle = boxlight_pwm_stored if int(message) else 0
+                
+            elif topic == fan_feed:
+                fan.value = int(message)
+            elif topic == boxlight_feed:
+                
+                boxlight.duty_cycle = int(65535 * (int(message)/100))
+                boxlight_pwm_stored = boxlight.duty_cycle
+                
                 
         # Make MQTT Client        
         mqtt_client = MQTT.MQTT(
@@ -366,7 +445,7 @@ while power:
         mqtt_client.on_message = message
     
     
-        timeout_client = 15
+        timeout_client = 1313131311
         
         # Connect the client to the MQTT broker.
         print("Connecting to Adafruit IO...")
@@ -384,12 +463,25 @@ while power:
         readings = set_reading_values(recv_data)
 
         mqtt_client.publish(online_feed,1)
-        mqtt_client.publish(light_feed, int(led.value))
+        if boxlight.duty_cycle > 0:
+            mqtt_client.publish(light_feed, 1)
+        else:
+            mqtt_client.publish(light_feed, 0)
+        
         mqtt_client.publish(temp_feed, readings[2])
         mqtt_client.publish(humid_feed, readings[1])
         mqtt_client.publish(conc_feed, readings[0])
         
-        AVOID_THROTTLE_TIME = 10
+        recorded_temp = readings[2]
+        if recorded_temp >= 25:
+            fan.value = 1
+            mqtt_client.publish(fan_feed, 1)
+        else:
+            fan.value = 0
+            mqtt_client.publish(fan_feed, 0)
+            
+        
+        AVOID_THROTTLE_TIME = 15
         last_request_time = time.monotonic()
         change_mode_time = last_request_time
         mqtt_alive = True
@@ -413,12 +505,19 @@ while power:
                         recv_data.extend(segmented_frame)
                         segmented_frame = SFA30.readline()
                         
-                    readings = set_reading_values(recv_data)     
+                    readings = set_reading_values(recv_data) 
+                    recorded_temp = readings[2]
                     mqtt_client.publish(temp_feed, readings[2])
                     mqtt_client.publish(humid_feed, readings[1])
                     mqtt_client.publish(conc_feed, readings[0])
-                    
-                    
+                    if recorded_temp >= 26 & fan.value == 0:
+                        fan.value = 1
+                        mqtt_client.publish(fan_feed, 1)
+                    elif recorded_temp < 26 & fan.value == 1:
+                        fan.value = 0
+                        mqtt_client.publish(fan_feed, 0)
+
+       
                     #DHT version
                     # mqtt_client.publish(temp_feed, dht.temperature)
                     # mqtt_client.publish(humid_feed, dht.humidity)
@@ -450,7 +549,7 @@ while power:
                       
                         if time.monotonic() - change_mode_time > 5:
                             print("No discovery in 5s. Continue to IoT-platform mode")
-                            change_mode_time  = current
+                            change_mode_time  = time.monotonic()
                             local_network = False
                             break
                     if local_network:
@@ -462,6 +561,8 @@ while power:
             power = False
             mqtt_client.publish(online_feed,0)
             mqtt_client.publish(light_feed,0)
+            mqtt_client.publish(boxlight_feed,0)
+            mqtt_client.publish(fan_feed,0)
             mqtt_client.disconnect()
 
           
