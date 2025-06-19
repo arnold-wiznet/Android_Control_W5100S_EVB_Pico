@@ -7,6 +7,8 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.widget.EditText
+import android.widget.SeekBar
+import android.widget.SeekBar.OnSeekBarChangeListener
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -65,9 +67,9 @@ class MainActivity : ComponentActivity() {
         }
 
         install(HttpTimeout){
-            requestTimeoutMillis = 5000
-
-            socketTimeoutMillis = 5000
+            requestTimeoutMillis = 30000
+            connectTimeoutMillis = 30000
+            socketTimeoutMillis = 30000
         }
     }
     private var discoveryJob: Job? = null
@@ -93,7 +95,7 @@ class MainActivity : ComponentActivity() {
 
         val t2 = binding.T2
 
-        val ac = "YOUR_ACCOUNT_USERNAME"
+        val ac = "arnoldho"
         // Avoid keep calling to sound again
         var _discovered_once = false
         var _disconnected_to_Adafruit = false
@@ -111,6 +113,8 @@ class MainActivity : ComponentActivity() {
         val endpoint_online = "https://io.adafruit.com/api/v2/$ac/feeds/online/data"
         val endpoint_light = "https://io.adafruit.com/api/v2/$ac/feeds/light/data"
         val endpoint_conc = "https://io.adafruit.com/api/v2/$ac/feeds/conc/data"
+        val endpoint_lightbox = "https://io.adafruit.com/api/v2/$ac/feeds/pwmlight/data"
+        val endpoint_fan = "https://io.adafruit.com/api/v2/$ac/feeds/fan/data"
 
         val netLock = Mutex()
         enableEdgeToEdge()
@@ -170,6 +174,33 @@ class MainActivity : ComponentActivity() {
         halfGauge2.addRange(range_HCHO_normal)
         halfGauge2.addRange(range_HCHO_high)
 
+
+        // Slider and Button
+        val slider = binding.seekBar
+        val slider_button = binding.slidebutton
+        var slider_value:Int = 0
+
+        slider.max = 100
+        slider.setOnSeekBarChangeListener(object: OnSeekBarChangeListener{
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                slider_value = progress
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                //pass
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+               // pass
+            }
+        })
+
+
+        // fan button
+        val fan_button = binding.fanButton
+        fan_button.isEnabled = false
+        var fan_state = false
+
         // Obtain Device
         discoveryJob = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
@@ -180,12 +211,15 @@ class MainActivity : ComponentActivity() {
                         halfGauge.value = 0.0
                         t2.text = ""
                         buttonBulb.isEnabled = false
+                        slider_button.isEnabled = false
+                        fan_button.isEnabled = false
                     }
                     delay(10_000)
                     continue   // try again in 10s, don’t kill the loop
                 } else {
                     withContext(Dispatchers.Main){
                         buttonBulb.isEnabled = true
+//                        fan_button.isEnabled = true
                     }
                 }
 //                t2.setText("Trying to ping device")
@@ -238,6 +272,14 @@ class MainActivity : ComponentActivity() {
                                         buttonState = false
                                         buttonBulb.setImageResource(R.drawable.bulb_off)
                                     }
+
+                                    if (response["fan"].toString().toBoolean()) {
+                                        fan_state = true
+                                        fan_button.setImageResource(R.drawable.fan_on)
+                                    } else {
+                                        fan_state = false
+                                        fan_button.setImageResource(R.drawable.fan_off)
+                                    }
                                 }
 
                             } catch (e:Exception){
@@ -277,7 +319,7 @@ class MainActivity : ComponentActivity() {
 
 
         buttonBulb.setOnClickListener() {
-            if (!buttonBulb.isEnabled) return@setOnClickListener
+            if (!buttonBulb.isEnabled  ) return@setOnClickListener
             lifecycleScope.launch {
                 buttonBulb.isEnabled = false
                 t2.text = "Loading..."
@@ -352,6 +394,151 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+
+        slider_button.setOnClickListener() {
+            if (!slider_button.isEnabled) return@setOnClickListener
+            if (!buttonState) {
+                t2.text = "Turn on light before toggle"
+                return@setOnClickListener
+            }
+            lifecycleScope.launch {
+                slider_button.isEnabled = false
+                t2.text = "Loading..."
+                if (ip != null) {
+                    netLock.withLock {
+                        try {
+                            val slider_string = slider_value.toString()
+                            val slider_payload = """{
+                                    "value":$slider_string
+                                }""".trimIndent()
+                            val response: String = client.post("http://$ip:5000/lightbox") {
+                                header("Accept", "application/json")
+                                contentType(ContentType.Application.Json)
+                                setBody(slider_payload)
+                            }.body()
+                            t2.text = response
+
+                        } catch (e: Exception) {
+//                            t2.text = "Error: ${e.localizedMessage}"
+                        }
+                    }
+                }
+                else {
+
+                    // Check online status
+                    if (io_key != null) {
+                        try {
+                            val response_online: String = client.get(endpoint_online) {
+                                header("X-AIO-Key", io_key)
+                            }.bodyAsText()
+                            var jsonArray = JSONArray(response_online)
+                            if (jsonArray.length() > 0) {
+                                adafruit_online = jsonArray.getJSONObject(0).optInt("value", -1)
+                            }
+                        } catch (e: Exception) {
+                            //pass
+                        }
+
+
+                        if (adafruit_online == 1) {
+                            // Post light data
+                            try {
+
+                                val slider_string = slider_value.toString()
+                                val slider_payload = """{
+                                    "value":$slider_string
+                                }""".trimIndent()
+                                val responseText: String = client.post(endpoint_lightbox) {
+                                    header("X-AIO-Key", io_key)
+                                    contentType(ContentType.Application.Json)
+                                    setBody(slider_payload)
+                                }.bodyAsText()
+                                t2.text = JSONObject(responseText).optString("value")
+
+                            } catch (e: Exception) {
+                                t2.text = "Error: ${e.localizedMessage}"
+                            }
+                        } else {
+                            t2.text = "Server not online"
+                        }
+
+                    }
+                }
+                slider_button.isEnabled = true
+            }
+
+        }
+//        fan_button.setOnClickListener() {
+//            if (!fan_button.isEnabled) return@setOnClickListener
+//            lifecycleScope.launch {
+//                fan_button.isEnabled = false
+//                t2.text = "Loading..."
+//                if (ip != null) {
+//                    netLock.withLock {
+//                        try {
+//
+//
+//                            val response: String = client.get("http://$ip:5000/fan") {
+//                                header("Accept", "application/json")
+//                            }.body()
+//                            t2.text = response
+//                            fan_state = !fan_state
+//                        } catch (e: Exception) {
+////                            t2.text = "Error: ${e.localizedMessage}"
+//                        }
+//                    }
+//                }
+//                else {
+//
+//                    // Check online status
+//                    if (io_key != null) {
+//                        try {
+//                            val response_online: String = client.get(endpoint_online) {
+//                                header("X-AIO-Key", io_key)
+//                            }.bodyAsText()
+//                            var jsonArray = JSONArray(response_online)
+//                            if (jsonArray.length() > 0) {
+//                                adafruit_online = jsonArray.getJSONObject(0).optInt("value", -1)
+//                            }
+//                        } catch (e: Exception) {
+//                            //pass
+//                        }
+//
+//
+//                        if (adafruit_online == 1) {
+//
+//                            try {
+//
+//                                val fan_number: Int = if (fan_state) 0 else 1
+//                                val fan_payload = """{
+//                                    "value":$fan_number
+//                                }""".trimIndent()
+//                                val responseText: String = client.post(endpoint_fan) {
+//                                    header("X-AIO-Key", io_key)
+//                                    contentType(ContentType.Application.Json)
+//                                    setBody(fan_payload)
+//                                }.bodyAsText()
+//                                t2.text = JSONObject(responseText).optString("value")
+//                                fan_state = !fan_state
+//
+//                            } catch (e: Exception) {
+//                                t2.text = "Error: ${e.localizedMessage}"
+//                            }
+//                        } else {
+//                            t2.text = "Server not online"
+//                        }
+//
+//                    }
+//                }
+//                fan_button.isEnabled = true
+//                if (fan_state) {
+//                    fan_button.setImageResource(R.drawable.fan_on)
+//                } else {
+//                    fan_button.setImageResource(R.drawable.fan_off)
+//                }
+//            }
+//
+//        }
         // Automatically obtain data of SFA30
         get_data_job = lifecycleScope.launch(Dispatchers.IO){
             // If ip is obtained from discovery job
@@ -373,6 +560,13 @@ class MainActivity : ComponentActivity() {
                                     arcGauge.value = response["Temp"].toString().toDouble()
                                     halfGauge.value = response["Humidity"].toString().toDouble()
                                     halfGauge2.value = response["HCHO"].toString().toDouble()
+                                    val recieved_fan_string = response["fan"].toString()
+                                    t2.text = recieved_fan_string
+                                    if (recieved_fan_string == "true"){
+                                        fan_button.setImageResource(R.drawable.fan_on)
+                                    } else {
+                                        fan_button.setImageResource(R.drawable.fan_off)
+                                    }
                                 }
 
                             } catch (e: Exception) {
@@ -433,14 +627,29 @@ class MainActivity : ComponentActivity() {
                                         .bodyAsText().let { JSONArray(it).getJSONObject(0).optDouble("value", 0.0)}
                                 }.getOrDefault(0.0)
                             }
+                            val Fan_fetch = async(Dispatchers.IO){
+                                runCatching {
+                                    client.get(endpoint_fan){
+                                        header("X-AIO-KEY", io_key)
+                                    }
+                                        .bodyAsText().let { JSONArray(it).getJSONObject(0).optDouble("value", 0.0)}
+                                }.getOrDefault(-1)
+                            }
+
                             val temp  = temp_fetch.await()
                             val humid = humid_fetch.await()
                             val hcho  = HCHO_fetch.await()
+                            val fan   = Fan_fetch.await()
 
                             withContext(Dispatchers.Main){
                                 arcGauge.value = temp
                                 halfGauge.value = humid
                                 halfGauge2.value = hcho
+                                if (fan == 1.0){
+                                    fan_button.setImageResource(R.drawable.fan_on)
+                                } else {
+                                    fan_button.setImageResource(R.drawable.fan_off)
+                                }
                             }
                         } else{
                             // Offline
@@ -448,6 +657,7 @@ class MainActivity : ComponentActivity() {
                                 arcGauge.value = 0.0
                                 halfGauge.value = 0.0
                                 halfGauge2.value = 0.0
+                                fan_button.setImageResource(R.drawable.fan_off)
                             }
                         }
                     } else {
