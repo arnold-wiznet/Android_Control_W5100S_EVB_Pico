@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
 
         val t2 = binding.T2
 
-        val ac = "arnoldho"
+        val ac = "YOUR_ADAFRUIT_USERNAME"
         // Avoid keep calling to sound again
         var _discovered_once = false
         var _disconnected_to_Adafruit = false
