@@ -3,5 +3,5 @@ A easy-to-implement project that allows communication between your desired app w
 
 Now with a Fan and a PWM light output
 
-Youtube link           : https://youtu.be/eKbU7Wmnpe0 \n
+Youtube link           : https://youtu.be/eKbU7Wmnpe0  
 Hackster.IO            : [https://www.hackster.io/arnoldho/android-app-controlling-w5100s-evb-pico-2-as-iot-device-f81435 ](https://www.hackster.io/arnoldho/mini-smart-home-system-with-android-app-part-2-18ed2d)\
